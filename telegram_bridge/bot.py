@@ -1,14 +1,23 @@
 """Telegram long-polling side of the bridge.
 
 Builds the python-telegram-bot Application, wires up handlers for text,
-photo, and document messages, and forwards each incoming message to n8n as
+photo, and document messages, and forwards each incoming update to n8n as
 JSON over HTTP (localhost only).
+
+The payload forwarded to n8n is the raw Telegram Bot API Update object
+(``update.to_dict()``) — the same shape n8n's built-in Telegram Trigger node
+delivers as ``$json.body`` when it receives a webhook from Telegram. That
+means workflows written against the native node's expressions
+(``{{$json.body.message.chat.id}}``, ``{{$json.body.message.from.username}}``,
+``{{$json.body.message.text}}``, etc.) work unmodified against this bridge.
+The one addition is a ``bridge`` key holding the locally downloaded file
+path/type for photos and documents, since Telegram's Update object itself
+only carries a ``file_id`` — it never resolves to a path on disk.
 """
 
 from __future__ import annotations
 
 import logging
-import os
 import time
 from pathlib import Path
 from typing import Any
@@ -25,18 +34,6 @@ from .config import Settings
 from .forwarder import forward_to_n8n
 
 logger = logging.getLogger("telegram_bridge.bot")
-
-
-def _sender_info(update: Update) -> dict[str, Any]:
-    user = update.effective_user
-    if user is None:
-        return {}
-    return {
-        "id": user.id,
-        "username": user.username,
-        "first_name": user.first_name,
-        "last_name": user.last_name,
-    }
 
 
 async def _download_attachment(
@@ -69,16 +66,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         "Received message %s from chat %s", message.message_id, message.chat_id
     )
 
-    payload: dict[str, Any] = {
-        "chat_id": message.chat_id,
-        "message_id": message.message_id,
-        "date": message.date.isoformat() if message.date else None,
-        "from": _sender_info(update),
-        "text": message.text,
-        "caption": message.caption,
-        "file_path": None,
-        "file_type": None,
-    }
+    # Same shape as the raw JSON Telegram POSTs to a webhook — this is what
+    # n8n's built-in Telegram Trigger node hands workflows as $json.body.
+    payload: dict[str, Any] = update.to_dict()
+    bridge_extra: dict[str, Any] = {"file_path": None, "file_type": None}
 
     try:
         incoming_dir = Path(settings.incoming_dir)
@@ -86,22 +77,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if message.photo:
             # Largest photo is last in the list.
             photo = message.photo[-1]
-            payload["file_path"] = await _download_attachment(
+            bridge_extra["file_path"] = await _download_attachment(
                 context, photo.file_id, incoming_dir, f"{photo.file_unique_id}.jpg"
             )
-            payload["file_type"] = "photo"
+            bridge_extra["file_type"] = "photo"
         elif message.document:
-            payload["file_path"] = await _download_attachment(
+            bridge_extra["file_path"] = await _download_attachment(
                 context,
                 message.document.file_id,
                 incoming_dir,
                 message.document.file_name,
             )
-            payload["file_type"] = "document"
+            bridge_extra["file_type"] = "document"
     except Exception:  # noqa: BLE001 - never let a download failure crash polling
         logger.exception(
             "Failed to download attachment for message %s", message.message_id
         )
+
+    payload["bridge"] = bridge_extra
 
     await forward_to_n8n(settings.n8n_webhook_url, payload)
 

@@ -42,9 +42,11 @@ telegram_bridge (Python, asyncio)
   localhost HTTP between the bridge and n8n, so n8n's public-HTTPS
   requirement for Telegram never applies here, because it's the *bridge*,
   not n8n, that talks to Telegram.
-- **Component 3 — `n8n-nodes-telegram-bridge/`**: a small n8n community
-  node with one operation, **Send Message**, that calls the bridge's
-  `POST /send` to reply on Telegram.
+- **Component 3 — `n8n-nodes-telegram-bridge/`**: an n8n community node
+  mirroring the built-in Telegram node's send-side operations (Send
+  Message, Send Photo, Send Document, Edit Message Text — with parse
+  mode, reply threading, and inline keyboards) that calls the bridge's
+  `POST /send`.
 
 ## Component 1: the Python bridge
 
@@ -73,25 +75,35 @@ This starts, in one process:
 
 ### What gets forwarded to n8n
 
-On every incoming message, the bridge POSTs JSON to `N8N_WEBHOOK_URL`
-(default `http://localhost:5678/webhook/telegram-in`):
+On every incoming message, the bridge POSTs the **raw Telegram Bot API
+`Update` object** to `N8N_WEBHOOK_URL` (default
+`http://localhost:5678/webhook/telegram-in`) — the exact same shape n8n's
+built-in Telegram Trigger node hands a workflow as `$json.body` when
+Telegram calls its webhook. That means expressions written against the
+native node (`{{$json.body.message.chat.id}}`,
+`{{$json.body.message.from.username}}`, `{{$json.body.message.text}}`,
+`{{$json.body.message.photo}}`, …) work unmodified here:
 
 ```json
 {
-  "chat_id": 123456789,
-  "message_id": 42,
-  "date": "2026-08-30T12:00:00+00:00",
-  "from": { "id": 111, "username": "alice", "first_name": "Alice", "last_name": null },
-  "text": "hello",
-  "caption": null,
-  "file_path": null,
-  "file_type": null
+  "update_id": 123456,
+  "message": {
+    "message_id": 42,
+    "date": 1788055227,
+    "chat": { "id": 123456789, "type": "private", "first_name": "Alice" },
+    "from": { "id": 111, "username": "alice", "first_name": "Alice", "is_bot": false },
+    "text": "hello"
+  },
+  "bridge": { "file_path": null, "file_type": null }
 }
 ```
 
-Photos and documents are downloaded to `./incoming/` first (see
-`INCOMING_DIR` in `.env`); `file_path` then points at the local file and
-`file_type` is `"photo"` or `"document"`.
+The one addition on top of Telegram's native shape is `bridge`: Telegram's
+`message.photo`/`message.document` only ever carry a `file_id`, never a
+path on disk, so for photos and documents the bridge downloads the
+attachment to `./incoming/` (see `INCOMING_DIR` in `.env`) and reports
+`bridge.file_path`/`bridge.file_type` (`"photo"` or `"document"`)
+alongside the untouched native `message` object.
 
 If n8n is unreachable, the POST is retried up to 3 times with exponential
 backoff. A failure after all retries is logged to stdout — it never
@@ -100,17 +112,30 @@ way.
 
 ### Sending messages back
 
-`POST http://127.0.0.1:8811/send` with either:
+`POST http://127.0.0.1:8811/send`, mirroring the built-in Telegram node's
+operations via an `operation` field (default `sendMessage`):
 
 ```json
-{ "chat_id": 123456789, "text": "hi there" }
+{ "operation": "sendMessage", "chat_id": 123456789, "text": "hi there" }
 ```
-
-or
 
 ```json
-{ "chat_id": 123456789, "photo_path": "/opt/telegram-bridge/incoming/some.jpg", "caption": "check this out" }
+{ "operation": "sendPhoto", "chat_id": 123456789, "photo_path": "/opt/telegram-bridge/incoming/some.jpg", "caption": "check this out" }
 ```
+
+```json
+{ "operation": "sendDocument", "chat_id": 123456789, "document_path": "/opt/telegram-bridge/incoming/report.pdf" }
+```
+
+```json
+{ "operation": "editMessageText", "chat_id": 123456789, "message_id": 42, "text": "updated text" }
+```
+
+All operations accept the optional fields the native node also exposes:
+`parse_mode` (`"Markdown"` / `"MarkdownV2"` / `"HTML"`),
+`disable_notification`, `reply_to_message_id`, and `reply_markup` (a
+Telegram inline-keyboard object, e.g.
+`{"inline_keyboard": [[{"text": "Yes", "callback_data": "yes"}]]}`).
 
 `GET http://127.0.0.1:8811/health` returns `{"status": "ok"}`.
 
@@ -142,7 +167,8 @@ Add a **Webhook** node to your workflow:
   webhook's response body
 
 That's the entire receive side. The Webhook node's payload `body` is the
-JSON shown above.
+raw Telegram `Update` object shown above — identical in shape to what the
+native Telegram Trigger node would have delivered.
 
 ## Component 3: n8n send side (community node)
 
@@ -160,9 +186,11 @@ Then install it into n8n (community-nodes UI, `~/.n8n/custom`, or
 
 Add a **Telegram Bridge API** credential pointing at
 `http://127.0.0.1:8811` (the default), then use the **Telegram Bridge**
-node's **Send Message** operation, wired with a **Chat ID** (typically
-`{{$json.chat_id}}` from the incoming Webhook data) and either message
-text or a photo path + caption.
+node with a **Chat ID** (typically `{{$json.body.message.chat.id}}` from
+the incoming Webhook data) and whichever operation you need — Send
+Message, Send Photo, Send Document, or Edit Message Text — with Parse
+Mode, Reply To Message ID, and Reply Markup (inline keyboard) available
+under **Additional Fields**.
 
 ## Wiring it into a workflow
 
@@ -174,9 +202,9 @@ Example: echo bot workflow —
 
 1. **Webhook** node at `/webhook/telegram-in`.
 2. A **Set**/**Function** node building a reply, e.g.
-   `You said: {{$json.body.text}}`.
-3. **Telegram Bridge** node, Chat ID = `{{$json.body.chat_id}}`, Message
-   Text = the value from step 2.
+   `You said: {{$json.body.message.text}}`.
+3. **Telegram Bridge** node, operation **Send Message**, Chat ID =
+   `{{$json.body.message.chat.id}}`, Text = the value from step 2.
 
 ## Testing end-to-end
 
@@ -187,11 +215,11 @@ Example: echo bot workflow —
 4. Watch the bridge's stdout log — you should see it forward the message
    to n8n.
 5. In n8n, check the workflow's execution list for a new run triggered by
-   the Webhook node, carrying your message in `body`.
+   the Webhook node, carrying the raw Telegram `Update` in `body`.
 6. If your workflow replies, you should get a message back in Telegram
    within a second or two.
 7. Send a photo to the bot and confirm `incoming/` gets a new file and the
-   webhook payload's `file_path`/`file_type` are populated.
+   webhook payload's `bridge.file_path`/`bridge.file_type` are populated.
 
 `curl http://127.0.0.1:8811/health` at any point to confirm the bridge's
 API is up.

@@ -20,22 +20,24 @@ async def forward_to_n8n(webhook_url: str, payload: dict[str, Any]) -> bool:
     Never raises: a failure here must not crash the polling loop. Returns
     True on success, False once all attempts are exhausted.
     """
+    update_id = payload.get("update_id")
+
     async with httpx.AsyncClient(timeout=10.0) as client:
         for attempt in range(1, MAX_ATTEMPTS + 1):
             try:
                 response = await client.post(webhook_url, json=payload)
                 response.raise_for_status()
                 logger.info(
-                    "Forwarded message %s to n8n (attempt %d/%d)",
-                    payload.get("message_id"),
+                    "Forwarded update %s to n8n (attempt %d/%d)",
+                    update_id,
                     attempt,
                     MAX_ATTEMPTS,
                 )
                 return True
             except Exception as exc:  # noqa: BLE001 - log and retry, never crash
                 logger.warning(
-                    "Failed to forward message %s to n8n (attempt %d/%d): %s",
-                    payload.get("message_id"),
+                    "Failed to forward update %s to n8n (attempt %d/%d): %s",
+                    update_id,
                     attempt,
                     MAX_ATTEMPTS,
                     exc,
@@ -45,8 +47,8 @@ async def forward_to_n8n(webhook_url: str, payload: dict[str, Any]) -> bool:
                     await asyncio.sleep(backoff)
 
     logger.error(
-        "Giving up forwarding message %s to n8n after %d attempts",
-        payload.get("message_id"),
+        "Giving up forwarding update %s to n8n after %d attempts",
+        update_id,
         MAX_ATTEMPTS,
     )
     return False

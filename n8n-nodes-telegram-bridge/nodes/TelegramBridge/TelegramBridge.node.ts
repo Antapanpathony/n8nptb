@@ -15,7 +15,8 @@ export class TelegramBridge implements INodeType {
 		group: ['output'],
 		version: 1,
 		subtitle: '={{$parameter["operation"]}}',
-		description: 'Send Telegram messages via the self-hosted long-polling bridge',
+		description:
+			'Send/edit Telegram messages via the self-hosted long-polling bridge (drop-in for the built-in Telegram node\'s send side)',
 		defaults: {
 			name: 'Telegram Bridge',
 		},
@@ -37,8 +38,26 @@ export class TelegramBridge implements INodeType {
 					{
 						name: 'Send Message',
 						value: 'sendMessage',
-						description: 'Send a text message or a photo through the bridge',
-						action: 'Send a message',
+						description: 'Send a text message',
+						action: 'Send a text message',
+					},
+					{
+						name: 'Send Photo',
+						value: 'sendPhoto',
+						description: 'Send a photo, with an optional caption',
+						action: 'Send a photo',
+					},
+					{
+						name: 'Send Document',
+						value: 'sendDocument',
+						description: 'Send a document/file, with an optional caption',
+						action: 'Send a document',
+					},
+					{
+						name: 'Edit Message Text',
+						value: 'editMessageText',
+						description: 'Edit the text of a message the bot previously sent',
+						action: 'Edit a message',
 					},
 				],
 				default: 'sendMessage',
@@ -49,41 +68,62 @@ export class TelegramBridge implements INodeType {
 				type: 'string',
 				default: '',
 				required: true,
-				description: 'Telegram chat ID to send the message to',
+				description: 'Telegram chat ID to send/edit the message in',
 			},
 			{
-				displayName: 'Send Photo',
-				name: 'sendPhoto',
-				type: 'boolean',
-				default: false,
-				description: 'Whether to send a photo (with optional caption) instead of plain text',
+				displayName: 'Message ID',
+				name: 'messageId',
+				type: 'string',
+				default: '',
+				required: true,
+				displayOptions: {
+					show: {
+						operation: ['editMessageText'],
+					},
+				},
+				description: 'ID of the message to edit (e.g. from the incoming update\'s message.message_id)',
 			},
 			{
-				displayName: 'Message Text',
+				displayName: 'Text',
 				name: 'text',
 				type: 'string',
 				typeOptions: {
 					rows: 3,
 				},
 				default: '',
+				required: true,
 				displayOptions: {
 					show: {
-						sendPhoto: [false],
+						operation: ['sendMessage', 'editMessageText'],
 					},
 				},
-				description: 'Text of the message to send',
+				description: 'Text of the message',
 			},
 			{
 				displayName: 'Photo Path',
 				name: 'photoPath',
 				type: 'string',
 				default: '',
+				required: true,
 				displayOptions: {
 					show: {
-						sendPhoto: [true],
+						operation: ['sendPhoto'],
 					},
 				},
 				description: 'Local filesystem path (on the bridge host) of the photo to send',
+			},
+			{
+				displayName: 'Document Path',
+				name: 'documentPath',
+				type: 'string',
+				default: '',
+				required: true,
+				displayOptions: {
+					show: {
+						operation: ['sendDocument'],
+					},
+				},
+				description: 'Local filesystem path (on the bridge host) of the document to send',
 			},
 			{
 				displayName: 'Caption',
@@ -92,10 +132,64 @@ export class TelegramBridge implements INodeType {
 				default: '',
 				displayOptions: {
 					show: {
-						sendPhoto: [true],
+						operation: ['sendPhoto', 'sendDocument'],
 					},
 				},
-				description: 'Optional caption for the photo',
+				description: 'Optional caption for the photo/document',
+			},
+			{
+				displayName: 'Additional Fields',
+				name: 'additionalFields',
+				type: 'collection',
+				placeholder: 'Add Field',
+				default: {},
+				options: [
+					{
+						displayName: 'Parse Mode',
+						name: 'parseMode',
+						type: 'options',
+						options: [
+							{ name: 'None', value: '' },
+							{ name: 'Markdown', value: 'Markdown' },
+							{ name: 'MarkdownV2', value: 'MarkdownV2' },
+							{ name: 'HTML', value: 'HTML' },
+						],
+						default: '',
+						description: 'How Telegram should parse the text/caption for formatting',
+					},
+					{
+						displayName: 'Disable Notification',
+						name: 'disableNotification',
+						type: 'boolean',
+						default: false,
+						description: 'Whether to send the message silently',
+						displayOptions: {
+							hide: {
+								'/operation': ['editMessageText'],
+							},
+						},
+					},
+					{
+						displayName: 'Reply To Message ID',
+						name: 'replyToMessageId',
+						type: 'string',
+						default: '',
+						description: 'Make this message a reply to another message in the chat',
+						displayOptions: {
+							hide: {
+								'/operation': ['editMessageText'],
+							},
+						},
+					},
+					{
+						displayName: 'Reply Markup (Inline Keyboard JSON)',
+						name: 'replyMarkup',
+						type: 'json',
+						default: '',
+						description:
+							'Telegram inline keyboard as JSON, e.g. {"inline_keyboard":[[{"text":"Yes","callback_data":"yes"}]]}',
+					},
+				],
 			},
 		],
 	};
@@ -112,31 +206,62 @@ export class TelegramBridge implements INodeType {
 
 		for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
 			try {
+				const operation = this.getNodeParameter('operation', itemIndex) as string;
 				const chatId = this.getNodeParameter('chatId', itemIndex) as string;
-				const sendPhoto = this.getNodeParameter('sendPhoto', itemIndex) as boolean;
+				const additionalFields = this.getNodeParameter(
+					'additionalFields',
+					itemIndex,
+					{},
+				) as IDataObject;
 
-				const body: IDataObject = { chat_id: chatId };
+				const body: IDataObject = { operation, chat_id: chatId };
 
-				if (sendPhoto) {
+				if (operation === 'sendMessage' || operation === 'editMessageText') {
+					body.text = this.getNodeParameter('text', itemIndex) as string;
+				}
+				if (operation === 'editMessageText') {
+					body.message_id = this.getNodeParameter('messageId', itemIndex) as string;
+				}
+				if (operation === 'sendPhoto') {
 					const photoPath = this.getNodeParameter('photoPath', itemIndex) as string;
-					const caption = this.getNodeParameter('caption', itemIndex) as string;
 					if (!photoPath) {
-						throw new NodeOperationError(this.getNode(), 'Photo Path is required when Send Photo is enabled', {
+						throw new NodeOperationError(this.getNode(), 'Photo Path is required', {
 							itemIndex,
 						});
 					}
 					body.photo_path = photoPath;
-					if (caption) {
-						body.caption = caption;
-					}
-				} else {
-					const text = this.getNodeParameter('text', itemIndex) as string;
-					if (!text) {
-						throw new NodeOperationError(this.getNode(), 'Message Text is required', {
+				}
+				if (operation === 'sendDocument') {
+					const documentPath = this.getNodeParameter('documentPath', itemIndex) as string;
+					if (!documentPath) {
+						throw new NodeOperationError(this.getNode(), 'Document Path is required', {
 							itemIndex,
 						});
 					}
-					body.text = text;
+					body.document_path = documentPath;
+				}
+				if (operation === 'sendPhoto' || operation === 'sendDocument') {
+					const caption = this.getNodeParameter('caption', itemIndex, '') as string;
+					if (caption) {
+						body.caption = caption;
+					}
+				}
+
+				if (additionalFields.parseMode) {
+					body.parse_mode = additionalFields.parseMode;
+				}
+				if (
+					additionalFields.disableNotification !== undefined &&
+					operation !== 'editMessageText'
+				) {
+					body.disable_notification = additionalFields.disableNotification;
+				}
+				if (additionalFields.replyToMessageId && operation !== 'editMessageText') {
+					body.reply_to_message_id = additionalFields.replyToMessageId;
+				}
+				if (additionalFields.replyMarkup) {
+					const raw = additionalFields.replyMarkup;
+					body.reply_markup = typeof raw === 'string' ? JSON.parse(raw) : raw;
 				}
 
 				const response = await this.helpers.httpRequest({

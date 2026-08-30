@@ -4,9 +4,12 @@ An n8n community node that sends Telegram messages through a locally running
 `telegram_bridge` service instead of n8n's built-in Telegram node — see the
 [top-level README](../README.md) for why.
 
-It exposes one operation, **Send Message**, which calls
-`POST http://127.0.0.1:8811/send` (or whatever base URL your credential
-points at) on the bridge.
+It mirrors the send-side operations n8n's built-in Telegram node exposes —
+**Send Message**, **Send Photo**, **Send Document**, **Edit Message
+Text** — plus Parse Mode, Reply To Message ID, Disable Notification, and
+Reply Markup (inline keyboards) under Additional Fields. Every operation
+calls `POST http://127.0.0.1:8811/send` (or whatever base URL your
+credential points at) on the bridge.
 
 ## Install as a community node
 
