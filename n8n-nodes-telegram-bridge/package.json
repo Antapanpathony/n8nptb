@@ -1,0 +1,38 @@
+{
+  "name": "n8n-nodes-telegram-bridge",
+  "version": "0.1.0",
+  "description": "Send Telegram messages through a self-hosted long-polling bridge, no public HTTPS webhook required.",
+  "keywords": [
+    "n8n-community-node-package"
+  ],
+  "license": "MIT",
+  "homepage": "",
+  "author": {
+    "name": "Anthony Lim"
+  },
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc && npm run copy-assets",
+    "copy-assets": "mkdir -p dist/nodes/TelegramBridge && cp nodes/TelegramBridge/icon.svg dist/nodes/TelegramBridge/icon.svg",
+    "dev": "tsc --watch"
+  },
+  "files": [
+    "dist"
+  ],
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "credentials": [
+      "dist/credentials/TelegramBridgeApi.credentials.js"
+    ],
+    "nodes": [
+      "dist/nodes/TelegramBridge/TelegramBridge.node.js"
+    ]
+  },
+  "devDependencies": {
+    "n8n-workflow": "^1.60.0",
+    "typescript": "^5.4.0"
+  },
+  "peerDependencies": {
+    "n8n-workflow": "*"
+  }
+}

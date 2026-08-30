@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+incoming/*
+!incoming/.gitkeep
+
+node_modules/
+dist/
+*.tgz

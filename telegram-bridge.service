@@ -1,0 +1,23 @@
+[Unit]
+Description=Telegram <-> n8n long-polling bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust User/WorkingDirectory/ExecStart to match your deployment.
+User=telegram-bridge
+WorkingDirectory=/opt/telegram-bridge
+EnvironmentFile=/opt/telegram-bridge/.env
+ExecStart=/opt/telegram-bridge/.venv/bin/python -m telegram_bridge
+Restart=on-failure
+RestartSec=5
+# The bridge only ever binds 127.0.0.1, but harden the unit anyway.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/telegram-bridge/incoming
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
