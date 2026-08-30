@@ -24,6 +24,13 @@ logger = logging.getLogger("telegram_bridge")
 async def run_bot(application) -> None:
     """Starts the Application and its polling updater, and idles forever."""
     async with application:
+        # Long polling and a webhook are mutually exclusive on Telegram's
+        # side: if this bot token was ever used with a webhook (e.g. n8n's
+        # built-in Telegram Trigger node, which this bridge replaces),
+        # getUpdates() fails with "Conflict: can't use getUpdates method
+        # while a webhook is active" until the webhook is torn down.
+        await application.bot.delete_webhook(drop_pending_updates=True)
+
         await application.start()
         await application.updater.start_polling(
             allowed_updates=["message"],

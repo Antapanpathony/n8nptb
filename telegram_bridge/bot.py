@@ -65,6 +65,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if message is None:
         return
 
+    logger.info(
+        "Received message %s from chat %s", message.message_id, message.chat_id
+    )
+
     payload: dict[str, Any] = {
         "chat_id": message.chat_id,
         "message_id": message.message_id,
