@@ -30,19 +30,23 @@ Telegram servers
       │  (bridge polls outbound; no inbound port)
       ▼
 telegram_bridge (Python, asyncio)
-  ├─ long-polling loop ──POST──▶ n8n Webhook node (http://localhost:5678/webhook/telegram-in)
-  └─ FastAPI on 127.0.0.1:8811 ◀──POST── n8n "Telegram Bridge" node (Send Message)
+  ├─ long-polling loop ──POST──▶ n8n "Telegram Bridge Trigger" node (http://localhost:5678/webhook/telegram-in)
+  └─ FastAPI on 127.0.0.1:8811 ◀──POST── n8n "Telegram Bridge" node (Send Message / Photo / Document / Edit)
 ```
 
 - **Component 1 — `telegram_bridge/`**: the Python polling service. Runs
   the Telegram long-polling loop and a small FastAPI app in one process
   (`asyncio.gather`), fully async.
-- **Component 2 — n8n receive side**: just n8n's built-in **Webhook**
-  node, listening at `/webhook/telegram-in`. No custom code — it's plain
-  localhost HTTP between the bridge and n8n, so n8n's public-HTTPS
-  requirement for Telegram never applies here, because it's the *bridge*,
-  not n8n, that talks to Telegram.
+- **Component 2 — n8n receive side**: the **Telegram Bridge Trigger**
+  community node, listening at `/webhook/telegram-in`. It's a thin
+  webhook-style trigger — plain localhost HTTP between the bridge and
+  n8n, so n8n's public-HTTPS requirement for Telegram never applies
+  here, because it's the *bridge*, not n8n, that talks to Telegram.
+  (n8n's built-in **Webhook** node works too, as a fallback that needs
+  no extra install — see below — but its output is nested under `body`
+  instead of matching the native Telegram Trigger node's shape.)
 - **Component 3 — `n8n-nodes-telegram-bridge/`**: an n8n community node
+  package with both the trigger above and a **Telegram Bridge** node
   mirroring the built-in Telegram node's send-side operations (Send
   Message, Send Photo, Send Document, Edit Message Text — with parse
   mode, reply threading, and inline keyboards) that calls the bridge's
@@ -158,17 +162,22 @@ handles crashes; `WantedBy=multi-user.target` handles boot.
 
 ## Component 2: n8n receive side
 
-Add a **Webhook** node to your workflow:
+Add a **Telegram Bridge Trigger** node to your workflow (from the same
+community package as Component 3 — see its install instructions below):
 
-- **HTTP Method**: `POST`
 - **Path**: `telegram-in` (so the full URL is
   `http://localhost:5678/webhook/telegram-in`, matching `N8N_WEBHOOK_URL`)
-- **Respond**: "Immediately" is simplest — the bridge doesn't wait on the
-  webhook's response body
 
-That's the entire receive side. The Webhook node's payload `body` is the
-raw Telegram `Update` object shown above — identical in shape to what the
-native Telegram Trigger node would have delivered.
+That's the entire receive side. Its output **is** the raw Telegram
+`Update` object shown above, unwrapped — `{{$json.message.chat.id}}`,
+`{{$json.message.text}}`, `{{$json.bridge.file_path}}`, etc. — identical
+to what n8n's native Telegram Trigger node would have delivered.
+
+**Alternative, no install required:** n8n's built-in **Webhook** node
+(`POST`, path `telegram-in`, Respond "Immediately") works exactly the
+same way, except the payload lands under `body`
+(`{{$json.body.message.chat.id}}`) instead of at the top level, since
+that's how the generic Webhook node wraps requests.
 
 ## Component 3: n8n send side (community node)
 
@@ -182,44 +191,46 @@ npm run build
 ```
 
 Then install it into n8n (community-nodes UI, `~/.n8n/custom`, or
-`N8N_CUSTOM_EXTENSIONS` — all documented in that README).
+`N8N_CUSTOM_EXTENSIONS` — all documented in that README). This gets you
+both nodes, **Telegram Bridge Trigger** and **Telegram Bridge**, in the
+node picker.
 
 Add a **Telegram Bridge API** credential pointing at
 `http://127.0.0.1:8811` (the default), then use the **Telegram Bridge**
-node with a **Chat ID** (typically `{{$json.body.message.chat.id}}` from
-the incoming Webhook data) and whichever operation you need — Send
-Message, Send Photo, Send Document, or Edit Message Text — with Parse
-Mode, Reply To Message ID, and Reply Markup (inline keyboard) available
-under **Additional Fields**.
+node with a **Chat ID** (typically `{{$json.message.chat.id}}` from the
+trigger) and whichever operation you need — Send Message, Send Photo,
+Send Document, or Edit Message Text — with Parse Mode, Reply To Message
+ID, and Reply Markup (inline keyboard) available under **Additional
+Fields**.
 
 ## Wiring it into a workflow
 
 ```
-Webhook (telegram-in)  →  [your logic]  →  Telegram Bridge (Send Message)
+Telegram Bridge Trigger (telegram-in)  →  [your logic]  →  Telegram Bridge (Send Message)
 ```
 
 Example: echo bot workflow —
 
-1. **Webhook** node at `/webhook/telegram-in`.
+1. **Telegram Bridge Trigger** node, path `telegram-in`.
 2. A **Set**/**Function** node building a reply, e.g.
-   `You said: {{$json.body.message.text}}`.
+   `You said: {{$json.message.text}}`.
 3. **Telegram Bridge** node, operation **Send Message**, Chat ID =
-   `{{$json.body.message.chat.id}}`, Text = the value from step 2.
+   `{{$json.message.chat.id}}`, Text = the value from step 2.
 
 ## Testing end-to-end
 
 1. Start the bridge: `python -m telegram_bridge`.
-2. Start n8n with the Webhook → Telegram Bridge workflow above, active.
+2. Start n8n with the Trigger → Telegram Bridge workflow above, active.
 3. Open Telegram, find your bot (the one behind `BOT_TOKEN`), and send it
    a text message.
 4. Watch the bridge's stdout log — you should see it forward the message
    to n8n.
 5. In n8n, check the workflow's execution list for a new run triggered by
-   the Webhook node, carrying the raw Telegram `Update` in `body`.
+   the Telegram Bridge Trigger node, carrying the raw Telegram `Update`.
 6. If your workflow replies, you should get a message back in Telegram
    within a second or two.
 7. Send a photo to the bot and confirm `incoming/` gets a new file and the
-   webhook payload's `bridge.file_path`/`bridge.file_type` are populated.
+   trigger's `bridge.file_path`/`bridge.file_type` are populated.
 
 `curl http://127.0.0.1:8811/health` at any point to confirm the bridge's
 API is up.

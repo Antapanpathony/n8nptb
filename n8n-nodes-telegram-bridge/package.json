@@ -1,7 +1,7 @@
 {
   "name": "n8n-nodes-telegram-bridge",
   "version": "0.1.0",
-  "description": "Send Telegram messages through a self-hosted long-polling bridge, no public HTTPS webhook required.",
+  "description": "Send and receive Telegram messages through a self-hosted long-polling bridge, no public HTTPS webhook required.",
   "keywords": [
     "n8n-community-node-package"
   ],
@@ -13,7 +13,7 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc && npm run copy-assets",
-    "copy-assets": "mkdir -p dist/nodes/TelegramBridge && cp nodes/TelegramBridge/icon.svg dist/nodes/TelegramBridge/icon.svg",
+    "copy-assets": "mkdir -p dist/nodes/TelegramBridge dist/nodes/TelegramBridgeTrigger && cp nodes/TelegramBridge/icon.svg dist/nodes/TelegramBridge/icon.svg && cp nodes/TelegramBridgeTrigger/icon.svg dist/nodes/TelegramBridgeTrigger/icon.svg",
     "dev": "tsc --watch"
   },
   "files": [
@@ -25,7 +25,8 @@
       "dist/credentials/TelegramBridgeApi.credentials.js"
     ],
     "nodes": [
-      "dist/nodes/TelegramBridge/TelegramBridge.node.js"
+      "dist/nodes/TelegramBridge/TelegramBridge.node.js",
+      "dist/nodes/TelegramBridgeTrigger/TelegramBridgeTrigger.node.js"
     ]
   },
   "devDependencies": {
