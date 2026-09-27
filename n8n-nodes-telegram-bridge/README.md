@@ -41,11 +41,13 @@ npm install /path/to/n8n-nodes-telegram-bridge
 ```
 
 **Restart n8n.** Both **Telegram Bridge Trigger** and **Telegram Bridge**
-should now appear in the node picker. If you see "Unrecognized node
-type" in a workflow, it almost always means one of: the package wasn't
-rebuilt (`npm run build` — check `dist/` exists), n8n wasn't restarted
-after installing/updating it, or it was installed under a different
-directory/name than the one currently configured.
+should now appear in the node picker. If they don't, see
+[Nodes don't appear in the picker](#nodes-dont-appear-in-the-picker).
+
+`~/.n8n/custom` must be the `.n8n` folder of the user that **runs n8n**
+(or `$N8N_USER_FOLDER/.n8n/custom` if that's set). Installing it with
+`npm install -g` or `npm link` does not work: n8n 2.x no longer loads
+custom nodes from the global `node_modules`.
 
 Nodes installed this way are internally namespaced `CUSTOM.<nodeName>`
 (e.g. `CUSTOM.telegramBridgeTrigger`) — that prefix is expected and
@@ -60,12 +62,15 @@ cd n8n-nodes-telegram-bridge
 npm install
 npm run build
 
-# Point this at the PARENT directory of the package, not the package
-# folder itself — n8n scans each entry for subfolders that are npm
-# packages.
-export N8N_CUSTOM_EXTENSIONS="/path/to"
+# n8n scans this directory recursively for *.node.js files, so pointing
+# it at the package folder itself is enough. Separate several with ';'.
+export N8N_CUSTOM_EXTENSIONS="/path/to/n8n-nodes-telegram-bridge"
 n8n start
 ```
+
+The variable has to be set in the environment of the n8n **process** —
+for a systemd service that's an `Environment=` line in the unit, and for
+pm2 it's the ecosystem file, not your interactive shell.
 
 ## Credential
 
@@ -80,3 +85,35 @@ Create a **Telegram Bridge API** credential with:
 npm install
 npm run build   # runs tsc, emits dist/, copies icon.svg
 ```
+
+## Nodes don't appear in the picker
+
+Run the read-only diagnostic script on the machine where n8n runs, while
+n8n is running (use `sudo` if n8n runs as a different user, e.g. a
+systemd service):
+
+```bash
+bash scripts/diagnose.sh                 # auto-detects the running n8n
+bash scripts/diagnose.sh /home/n8nuser   # or name the folder containing .n8n/
+```
+
+It prints which folders the running n8n scans, whether the built nodes
+are in them, whether the running n8n actually loaded them, and a verdict
+listing what to fix. The usual causes are:
+
+- **Installed into the wrong `.n8n`** — n8n runs as another user, under
+  `sudo`, or with `N8N_USER_FOLDER`, so it reads a different
+  `.n8n/custom` from the one you installed into.
+- **Installed globally** (`npm install -g` / `npm link`) — ignored by
+  n8n 2.x.
+- **n8n not restarted** — a systemd or pm2 service keeps the old
+  process until you restart *that* service.
+- **`NODES_INCLUDE` is set** — only the listed nodes are loaded; add
+  `CUSTOM.telegramBridge` and `CUSTOM.telegramBridgeTrigger`, or unset it.
+- **`dist/` missing or stale** — run `npm install && npm run build`.
+
+Where to look once it's loaded: in an empty workflow, search **Telegram
+Bridge** — n8n lists the trigger as "Telegram Bridge" (it drops the word
+"Trigger" in the trigger list). The send node only shows up when you add
+a step *after* a trigger. Hard-refresh the browser tab after restarting
+n8n.
